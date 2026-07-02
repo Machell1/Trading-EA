@@ -84,6 +84,43 @@ supports are (a) dropping break-even entirely and (b) crypto/M15 — but
 neither showed IS/OOS consistency, so treat them as research directions, not
 tradable signals.
 
+---
+
+## Addendum 2026-07-02 — per-asset tuning study (BTCUSD M15)
+
+The video's core claim is that the EMA periods must be *tuned to the asset*.
+Tested on BTCUSD M15 (~1.4y of real Deriv data), pre-registered design:
+1,152-config grid (EMA fast 20–80 × mid 90–150 × slow 200–350 × CCI zone
+{100,150} × expiry {8,12,16} × break-even {on,off}), winner selected by
+in-sample t-stat on the first 70% of bars only, evaluated once on the last
+30%. Script audited by a separate 2-agent workflow (no conclusion-changing
+defects; live probes confirmed worker determinism and CSV integrity).
+
+**Result: 0 of 3 gates pass. There is no tunable edge on this asset.**
+
+- **Gate 1 (in-sample significance): FAIL.** Best IS t-stat across all 1,152
+  configs = **0.48** vs a one-sided expected-max-of-null-trials hurdle of
+  ≈3.2 (conservatively printed as 3.75). The entire grid is statistically
+  flat in-sample — best IS total is +6.6R over 125 trades in ~1 year.
+- **Gate 2 (out-of-sample confirmation): FAIL.** The IS winner
+  (30/125/350, zone 150, expiry 16, BE on) made +7.0R OOS, t = 1.02 — not
+  significant.
+- **Gate 3 (parameter plateau): FAIL.** The winner's ±1-step EMA
+  neighborhood averages **−0.4R in-sample** (10/18 positive): a spike, not a
+  plateau.
+
+Diagnostic worth keeping: the OOS window is mildly positive for *every*
+config in the winner's neighborhood (18/18) and even for the untouched
+defaults (IS −8R → OOS +14.8R). When results improve out-of-sample
+regardless of parameters, the driver is a favorable recent **regime** on
+BTCUSD, not a parameter effect — it cannot be captured by tuning and should
+not be extrapolated.
+
+*Tuning harness: `backtest/tune_btcusd_m15.py`, full grid results in
+`backtest/results/tune_btcusd_m15.csv`.*
+
+---
+
 *Harness: `backtest/` — `pull_data.py`, `engine.py`, `run_matrix.py`,
 results in `backtest/results/`. Reproduce with
 `python backtest/pull_data.py && python backtest/run_matrix.py`.*
