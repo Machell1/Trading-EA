@@ -1,0 +1,4 @@
+data/
+__pycache__/
+replication/
+results/trades_main_sets.csv
