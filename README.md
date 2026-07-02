@@ -1,1 +1,99 @@
 # Trading-EA
+
+MetaTrader 5 Expert Advisor implementing the **Triple-EMA + CCI + MACD Histogram** pullback strategy from the Trader DNA video ["The Most Accurate EMA Settings Ever"](https://youtu.be/_Wr57vS9ADM).
+
+- EA source: [`Experts/EmaCciMacdEA.mq5`](Experts/EmaCciMacdEA.mq5)
+
+## Strategy rules (as taught in the video)
+
+The system stacks three confirmations: **trend** (EMAs), **momentum trigger** (CCI), and **trend-strength filter** (MACD histogram).
+
+### Buy setup
+
+1. **Trend filter** – price is above the slow EMA (and optionally the EMAs are stacked bullish: fast > mid > slow).
+2. **Pullback (arming)** – price pulls back and touches the **fast EMA** while the **CCI drops below −100** (oversold). The setup is now "armed" for a limited number of bars.
+3. **Entry trigger** – on a closed bar, the **CCI crosses back above the zero line**, price closes back above the fast EMA, and the **MACD histogram is above zero** (bulls still in control). → Open a buy.
+4. **Stop loss** – just **below the mid EMA** (plus a buffer). **Take profit** – an R-multiple of the stop distance (default 2R).
+
+### Sell setup
+
+Exact mirror: downtrend below the slow EMA, pullback up to the fast EMA with CCI above +100, entry when CCI crosses below zero with the MACD histogram below zero, stop just above the mid EMA.
+
+### The "secret" the video is really about: tuning the EMA periods
+
+The video's core message is that **there is no universal EMA setting**. You must find the periods that *your* symbol and timeframe actually respect (clean, repeated bounces off the line). The video's own examples use different sets on different charts:
+
+| Example from the video | Fast | Mid | Slow |
+|---|---|---|---|
+| Buy case study | 60 | 125 | 250 |
+| Multi-EMA chart | 50 | 110 | 250 |
+| Sell case study | 40 | 120 | 350 |
+
+All periods are EA inputs, so use the MT5 **Strategy Tester optimizer** to find the combination your market respects before trading it.
+
+## Installation
+
+1. Open MetaTrader 5 and go to **File → Open Data Folder**.
+2. Copy `Experts/EmaCciMacdEA.mq5` into `MQL5/Experts/`.
+3. Open MetaEditor (F4), locate the file in the Navigator, and press **F7** to compile (or just restart MT5 — it compiles `.mq5` files in `Experts` automatically).
+4. In MT5, enable **Algo Trading**, then drag **EmaCciMacdEA** from the Navigator onto a chart and allow live trading in the dialog.
+
+## Inputs
+
+### EMA settings
+| Input | Default | Description |
+|---|---|---|
+| `InpFastEmaPeriod` | 60 | Fast EMA — the bounce/pullback line |
+| `InpMidEmaPeriod` | 125 | Mid EMA — the stop-loss line |
+| `InpSlowEmaPeriod` | 250 | Slow EMA — the trend filter |
+| `InpRequireStacking` | true | Require EMAs ordered fast>mid>slow (bull) / fast<mid<slow (bear) |
+
+### CCI / MACD
+| Input | Default | Description |
+|---|---|---|
+| `InpCciPeriod` | 20 | CCI period |
+| `InpCciZone` | 100 | Overbought/oversold level (±) |
+| `InpUseMacdFilter` | true | Require MACD histogram on the trend side of zero |
+| `InpMacdFast/Slow/Signal` | 12/26/9 | Standard MACD parameters |
+
+### Setup logic
+| Input | Default | Description |
+|---|---|---|
+| `InpSetupExpiryBars` | 12 | How many bars an armed pullback setup stays valid |
+| `InpTouchTolerancePts` | 0 | Extra tolerance (points) for the fast-EMA touch |
+
+### Risk management
+| Input | Default | Description |
+|---|---|---|
+| `InpLotMode` | Risk % | Fixed lots or risk-% position sizing |
+| `InpFixedLot` | 0.10 | Lot size in fixed mode |
+| `InpRiskPercent` | 1.0 | % of balance risked per trade in risk mode |
+| `InpSlBufferPts` | 30 | SL buffer beyond the mid EMA (points) |
+| `InpTakeProfitRR` | 2.0 | TP as an R-multiple of the SL distance (0 = no TP) |
+| `InpExitOnOpposite` | true | Close an open position when the opposite signal fires |
+| `InpUseBreakEven` | true | Move SL to break-even after `InpBreakEvenRR` × risk in profit |
+| `InpBreakEvenRR` / `InpBreakEvenLockPts` | 1.0 / 5 | Break-even trigger and locked-in points |
+
+### Trade management
+| Input | Default | Description |
+|---|---|---|
+| `InpMagicNumber` | 57120250 | Magic number identifying this EA's trades |
+| `InpMaxSpreadPts` | 50 | Skip signals when spread exceeds this (0 = ignore) |
+| `InpStartHour` / `InpEndHour` | 0 / 24 | Server-time trading window (supports overnight windows) |
+
+## Behaviour notes
+
+- Signals are evaluated **once per bar, on closed bars only** — no repainting, no intra-bar flip-flopping.
+- The EA holds **one position per symbol at a time**.
+- Lot size is normalized to the broker's min/max/step volume, and the stop respects the broker's minimum stop level.
+- Works on any symbol/timeframe; the strategy was demonstrated on forex but the video claims it applies to stocks and crypto as well.
+
+## Backtesting / optimization
+
+1. Open the Strategy Tester (Ctrl+R), select **EmaCciMacdEA**, your symbol and timeframe, and "Every tick based on real ticks" for realistic results.
+2. Optimize the three EMA periods first (e.g. fast 20–80, mid 90–150, slow 200–350), then fine-tune `InpSetupExpiryBars` and `InpTakeProfitRR`.
+3. Forward-test on a **demo account** before risking real money.
+
+## Disclaimer
+
+This EA is provided for educational purposes. The video's claims ("almost always wins") are marketing — no strategy wins consistently without proper testing and risk management. Trading leveraged products involves substantial risk of loss. Always backtest and demo-trade first.
