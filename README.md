@@ -2,7 +2,8 @@
 
 MetaTrader 5 Expert Advisor implementing the **Triple-EMA + CCI + MACD Histogram** pullback strategy from the Trader DNA video ["The Most Accurate EMA Settings Ever"](https://youtu.be/_Wr57vS9ADM).
 
-- EA source: [`Experts/EmaCciMacdEA.mq5`](Experts/EmaCciMacdEA.mq5)
+- MT5 EA source: [`Experts/EmaCciMacdEA.mq5`](Experts/EmaCciMacdEA.mq5)
+- TradingView backtest version: [`TradingView/EmaCciMacdStrategy.pine`](TradingView/EmaCciMacdStrategy.pine)
 
 ## Strategy rules (as taught in the video)
 
@@ -88,7 +89,39 @@ All periods are EA inputs, so use the MT5 **Strategy Tester optimizer** to find 
 - Lot size is normalized to the broker's min/max/step volume, and the stop respects the broker's minimum stop level.
 - Works on any symbol/timeframe; the strategy was demonstrated on forex but the video claims it applies to stocks and crypto as well.
 
-## Backtesting / optimization
+## TradingView backtesting (Pine Script)
+
+`TradingView/EmaCciMacdStrategy.pine` is a Pine Script v6 port of the EA with identical logic (same arming state machine, CCI zero-line trigger, MACD filter, mid-EMA stop, R-multiple TP, break-even, session filter). To use it:
+
+1. Open TradingView, open the **Pine Editor**, paste the file contents, and click **Add to chart**.
+2. Open the **Strategy Tester** tab to see the equity curve, trade list, and performance stats.
+3. Tune the EMA periods per symbol/timeframe exactly as with the EA (the inputs mirror the EA inputs one-to-one).
+
+Two intentional differences from TradingView defaults, to match MT5 behaviour:
+
+- **Histogram definition** – MT5 draws the MACD *main line* as the histogram, while TradingView's classic histogram is MACD − signal. The script defaults to MT5-style; you can switch in the inputs.
+- **Sizing** – "Risk % of equity" mode assumes your account currency is the quote currency of the symbol (e.g. USD account on EURUSD), which is how most forex backtests are set up.
+
+### Commission percentage to simulate MT5 costs
+
+The script sets `commission_type = percent` with a default of **0.005% per side**, which approximates a typical MT5 forex account:
+
+| MT5 cost component | Typical value | As % of notional per side |
+|---|---|---|
+| ECN/raw commission | $6–7 per standard lot ($100k) round turn | ~0.003–0.0035% |
+| Raw spread (EURUSD) | 0.1–0.3 pips | ~0.001–0.003% |
+| **Total (raw/ECN account)** | | **~0.004–0.005%** |
+| Standard (spread-only) account | 1.0–1.5 pip spread, no commission | ~0.005–0.0075% |
+
+Adjust it under **Settings → Properties → Commission** for your broker:
+
+- Raw/ECN account: 0.004–0.005%
+- Standard spread-only account: 0.005–0.0075%
+- Indices/metals/crypto CFDs: convert your broker's typical spread to a percentage of price (spread ÷ price × 100) and add any per-trade commission.
+
+The script also applies 2 ticks of slippage per fill by default.
+
+## MT5 backtesting / optimization
 
 1. Open the Strategy Tester (Ctrl+R), select **EmaCciMacdEA**, your symbol and timeframe, and "Every tick based on real ticks" for realistic results.
 2. Optimize the three EMA periods first (e.g. fast 20–80, mid 90–150, slow 200–350), then fine-tune `InpSetupExpiryBars` and `InpTakeProfitRR`.
