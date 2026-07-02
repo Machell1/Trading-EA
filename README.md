@@ -32,6 +32,30 @@ The video's core message is that **there is no universal EMA setting**. You must
 
 All periods are EA inputs, so use the MT5 **Strategy Tester optimizer** to find the combination your market respects before trading it.
 
+### How to find your own EMA periods (the video's method)
+
+1. Open your symbol on the timeframe you plan to trade and add a single EMA.
+2. Test periods one by one — the video walks through **20 → 34 → 50 → 75 → 100 → 150 → 200** (and beyond, e.g. 250, 350).
+3. For each period, look at how price behaves at the line: you want **clean, repeated bounces** — price touching the EMA and rejecting like it hit a wall, in both recent and older data.
+4. Keep the period that gets respected most consistently. That becomes your **fast EMA** (the bounce/entry line).
+5. Repeat to find a deeper level that catches price when the fast EMA breaks — that's your **mid EMA** (also your stop-loss line).
+6. Find the deepest level that defines the overall trend (the video uses 250 or 350 instead of the usual 200) — that's your **slow EMA**. A break of this line means the trend itself may be flipping.
+7. Re-do this per symbol **and** per timeframe — a set that works on EURUSD H1 will not automatically work on GBPUSD M15.
+
+With the EA/Pine script you can automate this instead of eyeballing: optimize `InpFastEmaPeriod`, `InpMidEmaPeriod`, `InpSlowEmaPeriod` in the Strategy Tester and pick the region of settings (not a single lucky value) that performs consistently.
+
+### Indicator settings used by the strategy (defaults)
+
+| Indicator | Setting | Value | Where it's used |
+|---|---|---|---|
+| Fast EMA | period / price | 60, close | Pullback bounce line, entry confirmation |
+| Mid EMA | period / price | 125, close | Stop-loss line |
+| Slow EMA | period / price | 250, close | Trend filter |
+| CCI | period / price | 20, typical (HLC/3) | ±100 zones arm the setup, zero-line cross triggers entry |
+| MACD | fast / slow / signal | 12 / 26 / 9, close | Histogram above/below zero confirms trend strength |
+
+The CCI ±100 zones and the standard 12/26/9 MACD are used exactly as shown in the video; only the EMA periods are meant to be re-tuned per chart.
+
 ## Installation
 
 1. Open MetaTrader 5 and go to **File → Open Data Folder**.
