@@ -1,0 +1,202 @@
+//@version=6
+// -----------------------------------------------------------------------------
+// EMA + CCI + MACD Pullback strategy (Trader DNA - youtu.be/_Wr57vS9ADM)
+// Pine Script port of Experts/EmaCciMacdEA.mq5 for TradingView backtesting.
+//
+// BUY:  price above slow EMA (optionally EMAs stacked fast>mid>slow),
+//       setup "arms" when price touches the fast EMA while CCI < -100,
+//       entry when CCI crosses back above 0 with the MACD histogram > 0
+//       and the bar closing back above the fast EMA.
+//       SL just below the mid EMA, TP = R-multiple of the stop distance.
+// SELL: exact mirror.
+//
+// COMMISSION (matching MT5 costs):
+//   The strategy() default is 0.005% per side, which approximates a typical
+//   MT5 ECN/raw-spread forex account:
+//     - commission ~$6-7 per standard lot ($100k notional) round turn
+//       = 0.006-0.007% round turn = ~0.003-0.0035% per side
+//     - plus raw spread ~0.1-0.3 pips on EURUSD = ~0.001-0.003% per side
+//   => total ~0.004-0.007% per side. Adjust in Settings > Properties:
+//     - Standard (spread-only) account, ~1.0-1.5 pip spread: 0.005-0.0075%
+//     - Raw/ECN account with commission:                     0.004-0.005%
+//     - Indices/metals CFDs: convert your broker's spread to % of price.
+// -----------------------------------------------------------------------------
+strategy("EMA + CCI + MACD Pullback (Trader DNA)",
+     shorttitle  = "EMA-CCI-MACD",
+     overlay     = true,
+     initial_capital = 10000,
+     currency    = currency.USD,
+     commission_type  = strategy.commission.percent,
+     commission_value = 0.005,
+     slippage    = 2,
+     calc_on_every_tick     = false,
+     process_orders_on_close = true)
+
+// --- inputs -------------------------------------------------------------------
+gEma  = "EMA settings (tune per symbol/timeframe!)"
+fastLen      = input.int(60,   "Fast EMA period (bounce line)",   minval=2,  group=gEma)
+midLen       = input.int(125,  "Mid EMA period (stop-loss line)", minval=3,  group=gEma)
+slowLen      = input.int(250,  "Slow EMA period (trend line)",    minval=4,  group=gEma)
+requireStack = input.bool(true, "Require EMAs stacked in trend order", group=gEma)
+
+gCci = "CCI settings"
+cciLen  = input.int(20,     "CCI period",                      minval=2, group=gCci)
+cciZone = input.float(100.0, "CCI overbought/oversold level (+/-)", minval=1, group=gCci)
+
+gMacd = "MACD histogram filter"
+useMacd    = input.bool(true, "Use MACD histogram confirmation", group=gMacd)
+macdFastLen = input.int(12, "MACD fast EMA",   minval=1, group=gMacd)
+macdSlowLen = input.int(26, "MACD slow EMA",   minval=2, group=gMacd)
+macdSigLen  = input.int(9,  "MACD signal",     minval=1, group=gMacd)
+histMode = input.string("MT5 style (MACD line)", "Histogram definition",
+     options=["MT5 style (MACD line)", "Classic (MACD - signal)"], group=gMacd,
+     tooltip="MT5 draws the MACD main line as the histogram, which is what the EA uses. TradingView's classic histogram is MACD minus signal.")
+
+gSetup = "Setup logic"
+expiryBars = input.int(12,  "Bars a pullback setup stays armed", minval=1, group=gSetup)
+tolTicks   = input.float(0, "Touch tolerance around fast EMA (ticks)", minval=0, group=gSetup)
+
+gRisk = "Risk management"
+lotMode  = input.string("Risk % of equity", "Position sizing", options=["Risk % of equity", "Fixed quantity"], group=gRisk)
+fixedQty = input.float(10000, "Fixed quantity (units/contracts)", minval=0, group=gRisk)
+riskPct  = input.float(1.0,  "Risk % of equity per trade", minval=0.01, step=0.1, group=gRisk,
+     tooltip="Assumes account currency = quote currency of the symbol (e.g. USD account on EURUSD).")
+slBufTicks = input.float(30, "SL buffer beyond mid EMA (ticks)", minval=0, group=gRisk)
+tpRR       = input.float(2.0, "Take profit (R multiple, 0 = none)", minval=0, step=0.5, group=gRisk)
+exitOpposite = input.bool(true, "Close position on opposite signal", group=gRisk)
+useBE      = input.bool(true, "Move stop to break-even", group=gRisk)
+beRR       = input.float(1.0, "Break-even trigger (R multiple)", minval=0.1, step=0.1, group=gRisk)
+beLockTicks = input.float(5, "Ticks locked in at break-even", minval=0, group=gRisk)
+
+gTime = "Trading hours (chart timezone, 0-24 = always)"
+startHour = input.int(0,  "Start hour", minval=0, maxval=24, group=gTime)
+endHour   = input.int(24, "End hour",   minval=0, maxval=24, group=gTime)
+
+// --- indicators ----------------------------------------------------------------
+fastEma = ta.ema(close, fastLen)
+midEma  = ta.ema(close, midLen)
+slowEma = ta.ema(close, slowLen)
+cci     = ta.cci(hlc3, cciLen)                       // PRICE_TYPICAL, as in the EA
+[macdLine, macdSignalLine, macdClassicHist] = ta.macd(close, macdFastLen, macdSlowLen, macdSigLen)
+histVal = histMode == "MT5 style (MACD line)" ? macdLine : macdClassicHist
+
+tol    = tolTicks * syminfo.mintick
+slBuf  = slBufTicks * syminfo.mintick
+beLock = beLockTicks * syminfo.mintick
+
+// --- trend & session -------------------------------------------------------------
+bullTrend = close > slowEma and (not requireStack or (fastEma > midEma and midEma > slowEma))
+bearTrend = close < slowEma and (not requireStack or (fastEma < midEma and midEma < slowEma))
+
+inSession = (startHour <= 0 and endHour >= 24) ? true :
+     startHour <= endHour ? (hour >= startHour and hour < endHour) :
+     (hour >= startHour or hour < endHour)
+
+// --- pullback state machine (mirrors the EA's arming logic) -----------------------
+var bool buyArmed  = false
+var int  buyAge    = 0
+var bool sellArmed = false
+var int  sellAge   = 0
+
+if buyArmed
+    buyAge += 1
+    if buyAge > expiryBars
+        buyArmed := false
+if sellArmed
+    sellAge += 1
+    if sellAge > expiryBars
+        sellArmed := false
+if not bullTrend
+    buyArmed := false
+if not bearTrend
+    sellArmed := false
+
+if bullTrend and low <= fastEma + tol and cci < -cciZone
+    buyArmed := true
+    buyAge   := 0
+if bearTrend and high >= fastEma - tol and cci > cciZone
+    sellArmed := true
+    sellAge   := 0
+
+// --- entry triggers ---------------------------------------------------------------
+cciCrossUp   = ta.crossover(cci, 0)
+cciCrossDown = ta.crossunder(cci, 0)
+macdBullOk = not useMacd or histVal > 0
+macdBearOk = not useMacd or histVal < 0
+
+buySignal  = buyArmed  and bullTrend and cciCrossUp   and macdBullOk and close > fastEma
+sellSignal = sellArmed and bearTrend and cciCrossDown and macdBearOk and close < fastEma
+
+// --- position sizing --------------------------------------------------------------
+calcQty(float riskDist) =>
+    lotMode == "Fixed quantity" ? fixedQty :
+         riskDist > 0 ? (strategy.equity * riskPct / 100.0) / riskDist : 0.0
+
+// --- orders -------------------------------------------------------------------------
+var float curStop   = na
+var float curLimit  = na
+var float entryRisk = na
+var bool  beDone    = false
+
+if buySignal
+    buyArmed := false
+if sellSignal
+    sellArmed := false
+
+// exit on opposite signal
+if exitOpposite and strategy.position_size > 0 and sellSignal
+    strategy.close("Long", comment="Opposite signal")
+if exitOpposite and strategy.position_size < 0 and buySignal
+    strategy.close("Short", comment="Opposite signal")
+
+canTrade = strategy.position_size == 0 and inSession
+
+if canTrade and buySignal
+    sl = midEma - slBuf
+    if sl < close
+        riskDist = close - sl
+        qty = calcQty(riskDist)
+        if qty > 0
+            curStop   := sl
+            curLimit  := tpRR > 0 ? close + riskDist * tpRR : na
+            entryRisk := riskDist
+            beDone    := false
+            strategy.entry("Long", strategy.long, qty=qty)
+            strategy.exit("Long exit", "Long", stop=curStop, limit=curLimit)
+
+if canTrade and sellSignal
+    sl = midEma + slBuf
+    if sl > close
+        riskDist = sl - close
+        qty = calcQty(riskDist)
+        if qty > 0
+            curStop   := sl
+            curLimit  := tpRR > 0 ? close - riskDist * tpRR : na
+            entryRisk := riskDist
+            beDone    := false
+            strategy.entry("Short", strategy.short, qty=qty)
+            strategy.exit("Short exit", "Short", stop=curStop, limit=curLimit)
+
+// break-even management + attach protective orders
+if strategy.position_size > 0
+    if useBE and not beDone and close - strategy.position_avg_price >= entryRisk * beRR
+        curStop := strategy.position_avg_price + beLock
+        beDone  := true
+    strategy.exit("Long exit", "Long", stop=curStop, limit=curLimit)
+
+if strategy.position_size < 0
+    if useBE and not beDone and strategy.position_avg_price - close >= entryRisk * beRR
+        curStop := strategy.position_avg_price - beLock
+        beDone  := true
+    strategy.exit("Short exit", "Short", stop=curStop, limit=curLimit)
+
+// --- visuals ---------------------------------------------------------------------
+plot(fastEma, "Fast EMA", color=color.new(color.aqua,   0), linewidth=2)
+plot(midEma,  "Mid EMA",  color=color.new(color.orange, 0), linewidth=2)
+plot(slowEma, "Slow EMA", color=color.new(color.red,    0), linewidth=2)
+
+bgcolor(buyArmed  ? color.new(color.green, 92) : na, title="Buy setup armed")
+bgcolor(sellArmed ? color.new(color.red,   92) : na, title="Sell setup armed")
+
+plotshape(buySignal,  "Buy signal",  shape.triangleup,   location.belowbar, color.new(color.green, 0), size=size.small)
+plotshape(sellSignal, "Sell signal", shape.triangledown, location.abovebar, color.new(color.red,   0), size=size.small)
